@@ -27,5 +27,7 @@ app
     }),
   )
 
+console.log('Listening for requests on port ' + (process.env.PORT));
+
 const httpServer = http.createServer(app);
 httpServer.listen(process.env.PORT);
