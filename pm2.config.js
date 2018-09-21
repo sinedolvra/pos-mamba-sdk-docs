@@ -1,12 +1,15 @@
 module.exports = {
   apps: [
     {
-      name: "mambadocs",
+      name: "mambasdkdocs",
       script: "./build/index.js",
       watch: "true",
       env: {
-        PORT: 443,
+        'NODE_ENV': 'development'
       },
-    },
-  ],
+      env_production: {
+        'NODE_ENV': 'production'
+      }
+    }
+  ]
 };
