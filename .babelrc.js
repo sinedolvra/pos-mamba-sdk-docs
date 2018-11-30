@@ -1,4 +1,4 @@
-const { IS_TEST, IS_DEV } = require('quickenv')
+const { IS_TEST, IS_DEV } = require('quickenv');
 
 const presets = [
   [
@@ -8,14 +8,18 @@ const presets = [
       loose: true,
       /** Only parse modules if testing. If not, let webpack handle it */
       modules: IS_TEST() ? 'commonjs' : false,
-      debug: IS_DEV(),
+      debug: false,
       forceAllTransforms: true,
     },
   ],
-  ['@babel/preset-stage-3', { loose: true }],
-]
+];
 
-const plugins = [['@babel/plugin-proposal-class-properties', { loose: true }]]
+const plugins = [
+  /** Add support to import() */
+  '@babel/plugin-syntax-dynamic-import',
+  /** Add class properties support */
+  ['@babel/plugin-proposal-class-properties', { loose: true }],
+];
 
 module.exports = {
   sourceMaps: true,

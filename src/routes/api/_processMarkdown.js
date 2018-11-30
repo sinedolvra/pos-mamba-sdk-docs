@@ -1,6 +1,69 @@
 import fs from 'fs';
 import { join, basename } from 'path';
 import strings from './_strings';
+// import { compile } from 'svelte';
+// import { rollup } from 'rollup';
+// 
+// const rewriteImport = (contents) => contents.replace(/@mamba/g, '../../../@mamba');
+// 
+// async function build(fileContents) {
+//   let bundle;
+// 
+//   // create a bundle
+//   try {
+//     bundle = await rollup({
+//       input: 'Example.html',
+//       external: id => {
+//         console.log('id: ', id);
+//         return id[0] !== '.';
+//       },
+//       plugins: [{
+//         resolveId(importee, importer) {
+//           return importee;
+//         },
+//         load(id) {
+//           return fileContents;
+//         },
+//         transform(code, id) {
+//           if (!/\.html$/.test(id)) return null;
+// 
+//           const name = id.replace(/^\.\//, '').replace(/\.html$/, '');
+// 
+//           const { js, css, stats } = compile(code, Object.assign({
+//             generate: 'ssr',
+//             format: 'iife',
+//             name: name,
+//             filename: name + '.html',
+//             onwarn: warning => {
+//               console.warn(warning.message);
+//               console.log(warning.frame);
+//             },
+//           }, {
+//             cascade: false,
+//             store: true,
+//             skipIntroByDefault: true,
+//             nestedTransitions: true,
+//             dev: true,
+//           }));
+// 
+//           return js;
+//         }
+//       }]
+//     });
+//   } catch (error) {
+//     console.log('error: ', error);
+//     return;
+//   }
+// 
+//   //console.log(bundle.imports); // an array of external dependencies
+//   //console.log(bundle.exports); // an array of names exported by the entry point
+//   //console.log(bundle.modules); // an array of module objects
+// 
+//   // generate code and a sourcemap
+//   //const { code, map } = await bundle.generate(outputOptions);
+// 
+//   //console.log('code: ', code);
+// }
 
 export default function processMarkdown(markdown, dir, examplesPaths) {
   const metadata = {};
@@ -18,7 +81,7 @@ export default function processMarkdown(markdown, dir, examplesPaths) {
     if(found) {
 
       const filePath = found; // match[2].trim();
-      const absPath = join(dir, found);
+      const absPath = join(dir, 'Button/bundle.js');
       const fileContents = fs.readFileSync(absPath, 'utf-8');
       const matchTitle = match.input.match(/#\s.+?\n/);
       const title = matchTitle && matchTitle[0].trim() || match[2];
@@ -37,9 +100,11 @@ export default function processMarkdown(markdown, dir, examplesPaths) {
 
   // Create component props heading for multiple components in page
   markdown = markdown.replace(
-    /\`<([a-zA-Z]+)(\s\.\.\.props\s?)\/>\`/gm,
-    (m, $1, $2) => {
-      const scaped = `<span class="token punctuation">&lt;</span>${$1} <span class="attr-name">${$2}</span> <span class="token punctuation">/&gt;</span>`;
+    /\`<([a-zA-Z]+)(\s\.\.\.props\s?)(.+)?\/>\`/gm,
+    (m, $1, $2, $3) => {
+      const extra = $3 ? `<span class="token keyword" style="color:#428acc">${$3}</span>` : '';
+
+      const scaped = `<span class="token punctuation">&lt;</span>${$1}<span class="attr-name">${$2}</span>${extra} <span class="token punctuation">/&gt;</span>`;
       return `<h2 class="props-heading token tag">${scaped}</h2>`;
     },
   )

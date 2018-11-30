@@ -41,7 +41,23 @@
                 <h2>Exemplos</h2>
               </header>
               <div class="Code-run">
-                <svelte:component this="{Example}" name="example"/>
+                <div class="POS">
+                  <div class="POS-screen">
+                    <iframe title='Result' ref:child srcdoc='
+                      <!doctype html>
+                      <html>
+                        <head>
+                        </head>
+                        <body>
+                          
+                          <script src="/curl.js"></script>
+                          <script>curl.config(&#123; dontAddFileExt: /./ });</script>
+                        </body>
+                      </html>
+                    '></iframe>
+                  </div>
+                </div>
+                <!-- <svelte:component this="{Example}" name="example"/> -->
               </div>
               <div class="Source-wrapper">
                 {@html example.source}
@@ -62,10 +78,74 @@
 {/if}
 
 <script>
+  import { observe } from 'svelte-extras';
   import NProgress from 'nprogress';
   import capitalize from 'lodash.capitalize';
+  import getLocationFromStack from './_utils/getLocationFromStack.js';
+  //import POS from 'MambaPOS';
+
+  const workerPromise = process.browser && import('workerize-loader!./_svelteWorker.js').then(async ({ default: getWorker }) => getWorker());
+
+  let importCache = {};
+
+  function fetchImport(id, curl) {
+    return new Promise((fulfil, reject) => {
+      curl([`https://bundle.run/${id}`]).then(module => {
+        importCache[id] = module;
+        fulfil(module);
+      }, err => {
+        console.error(err.stack);
+        reject(new Error(`Error loading ${id} from bundle.run`));
+      });
+    });
+  }
+
+  const namespaceSpecifier = /\*\s+as\s+(\w+)/;
+  const namedSpecifiers = /\{(.+)\}/;
+
+  function parseSpecifiers(specifiers) {
+    specifiers = specifiers.trim();
+
+    let match = namespaceSpecifier.exec(specifiers);
+    if (match) {
+      return {
+        namespace: true,
+        name: match[1]
+      };
+    }
+
+    let names = [];
+
+    specifiers = specifiers.replace(namedSpecifiers, (match, str) => {
+      names = str.split(',').map(name => {
+        const split = name.split('as');
+        const exported = split[0].trim();
+        const local = (split[1] || exported).trim();
+
+        return { local, exported };
+      });
+
+      return '';
+    });
+
+    match = /\w+/.exec(specifiers);
+
+    return {
+      namespace: false,
+      names,
+      default: match ? match[0] : null
+    };
+  }
 
   export default {
+
+    async preload({ query }) {
+      return {
+        version: query.version || 'latest',
+        data: {}
+      };
+    },
+
     data() {
       return {
         isLoading: true,
@@ -74,13 +154,53 @@
     },
 
     async oncreate() {
+      let component;
       const { params } = this.get();
-      NProgress.start();
+
+//       workerPromise.then(async worker => {
+//         let { version } = this.get();
+// 
+//         version = await worker.init(version);
+// 
+//         const updateBundle = async () => {
+//           const { example } = this.get();
+// 
+//           const { bundle, dom, ssr, warningCount, error } = await worker.bundle(example);
+// 
+//           console.log('bundle, dom, ssr, warningCount, error: ', bundle, dom, ssr, warningCount, error);
+//           if (error) {
+//             this.set({
+//               bundle: null,
+//               dom: null,
+//               ssr: null,
+//               sourceError: error,
+//               runtimeError: null,
+//               warningCount,
+//               compilerReady: true
+//             });
+//           } else {
+//             this.set({
+//               bundle,
+//               dom,
+//               ssr,
+//               sourceError: null,
+//               runtimeError: null,
+//               warningCount,
+//               compilerReady: true
+//             });
+//           }
+//         };
+//         
+//         this.set({ version });
+//         this.observe('example', updateBundle);
+//       }); 
+      
+      //NProgress.start();
 
       await fetch(`api/components/${params.slug}`).then(r => r.json()).then(async manifest => {
         const docs = manifest && manifest.docs;
 
-        import(`@components/${(
+        /* import(`@components/${(
             manifest.docs.examples && 
             manifest.docs.examples[0] && 
             manifest.docs.examples[0].filePath) 
@@ -89,16 +209,177 @@
         .then(mod => {
           NProgress.done();
           this.set({Example: mod.default});
-        }).catch(NProgress.done); 
+
+          this.refs.child.addEventListener('load', () => {
+            const iframe = this.refs.child;
+            const body = iframe.contentDocument.body;
+            const evalInIframe = iframe.contentWindow.eval;
+            console.log('body: ', body);
+          });
+
+        }).catch(NProgress.done); */ 
 
         this.set({
           isLoading: false,
           manifest: manifest,
-          example: docs.examples.length && docs.examples[0] || false,
+          example: docs.examples.length && docs.examples || false,
+          bundle: docs.examples.length && docs.examples[0].fileContents,
           title: docs && docs.metadata.title || capitalize(params.slug)
         });
 
-        NProgress.inc();
+        this.refs.child.addEventListener('load', () => {
+          const iframe = this.refs.child;
+          const body = iframe.contentDocument.body;
+          const evalInIframe = iframe.contentWindow.eval;
+          console.log('body: ', body);
+
+          let promise = null;
+          let updating = false;
+
+          let toDestroy = null;
+
+          const init = () => {
+            const { bundle, dom, ssr, sourceError } = this.get();
+            if (sourceError) return;
+
+            const imports = [];
+            //const missingImports = bundle.imports.filter(x => !importCache[x]);
+
+            const removeStyles = () => {
+              const styles = iframe.contentDocument.querySelectorAll('style');
+              let i = styles.length;
+              while (i--) styles[i].parentNode.removeChild(styles[i]);
+            };
+
+            const ready = () => {
+              console.log('ready: ');
+              this.set({ error: null });
+
+              if (toDestroy) {
+                removeStyles();
+
+                toDestroy.destroy();
+                toDestroy = null;
+              }
+
+              /* bundle.imports.forEach(x => {
+                const module = importCache[x];
+                const name = bundle.importMap.get(x);
+
+                iframe.contentWindow[name] = module;
+              }); */
+
+              /* if (ssr) { // this only gets generated if component uses lifecycle hooks
+                this.set({ pending: true });
+                this.createHtml();
+              } else {
+                this.set({ pending: false });
+                this.createComponent();
+              } */
+              this.createHtml();
+            };
+
+            this.createHtml = () => {
+              const { bundle } = this.get();
+              try {
+                evalInIframe(`${bundle}
+                  var rendered = Button.render({});
+
+                  if (rendered.css.code) {
+                    var style = document.createElement('style');
+                    style.textContent = rendered.css.code;
+                    document.head.appendChild(style);
+                  }
+
+                  document.body.innerHTML = rendered.html;
+                  `)
+              } catch (error) {
+                console.log('error: ', error);
+              }
+            };
+
+            this.createComponent = () => {
+              // remove leftover styles from SSR renderer
+              if (ssr) removeStyles();
+
+              const { bundle } = this.get();
+
+              try {
+                evalInIframe(`${bundle}
+                  document.body.innerHTML = '';
+                  window.location.hash = '';
+                  window._svelteTransitionManager = null;
+
+                  var component = new Button({
+                    target: document.body,
+                    data: {}
+                  });`);
+
+                component = window.app = window.component = iframe.contentWindow.component;
+
+                component.on('state', ({ current }) => {
+                  if (updating) return;
+                  updating = true;
+                  this.fire('data', { current });
+                  updating = false;
+                });
+              } catch (error) {
+                // TODO show in UI
+                component = null;
+                console.log('error: ', error);
+                /* const loc = getLocationFromStack(error.stack, dom.map);
+                if (loc) {
+                  error.filename = loc.source;
+                  error.loc = { line: loc.line, column: loc.column };
+                }
+                this.set({ error }); */
+              }
+            };
+
+//             let pendingImports = missingImports.length;
+//             this.set({ pendingImports });
+//             console.log('missingImports: ', missingImports);
+//             
+//             if (missingImports.length) {
+//               let cancelled = false;
+// 
+//               promise = Promise.all(
+//                 missingImports.map(id => fetchImport(id, iframe.contentWindow.curl).then(module => {
+//                   pendingImports -= 1;
+//                   this.set({ pendingImports });
+//                   return module;
+//                 }))
+//               );
+//               promise.cancel = () => cancelled = true;
+// 
+//               promise
+//                 .then(() => {
+//                   if (cancelled) return;
+//                   ready();
+//                 })
+//                 .catch(error => {
+//                   if (cancelled) return;
+//                   this.set({ error });
+//                 });
+//             } else {
+//               ready();
+//             }
+              ready();
+
+          };
+
+          this.observe('bundle', bundle => {
+            if (!bundle) return; // TODO can this ever happen?
+            if (promise) promise.cancel();
+
+            toDestroy = component;
+            component = null;
+            init();
+          });
+          init();
+        });
+
+        // NProgress.inc();
       })
       .catch((e) => {
         NProgress.done();
@@ -107,6 +388,9 @@
           manifest: { error: "Falha ao carregar o component." }
         });
       });
+    },
+    methods: {
+      observe
     }
   }
 </script>
@@ -266,7 +550,6 @@
     & :global(h2) + :global(h3),
     & :global(h2 ~ h3 ~ p ~ h3) {
        margin-top: 30px;
-       color: var(--secondary);
     }
 
     & :global(h2[id="m-todos"]) ~ :global(h3) {
@@ -279,6 +562,7 @@
 
     & :global(h4) {
       margin-top: 30px;
+      margin-bottom: 25px;
     }
   }
 
@@ -320,7 +604,8 @@
   .Code-run {
 
     margin: 20px 0 0 0;
-    padding-bottom: 40px;
+    padding-bottom: 0;
+    background-color: transparent;
 
     :global(.container) {
       width: 100%;
@@ -335,6 +620,41 @@
         margin-bottom: 0;
       }
     }
+  }
+
+  :global(.POS) {
+    background: url('/images/POS.png') no-repeat;
+    background-size: 280px;
+    height: 100%;
+  }
+
+  .POS {
+    position: relative;
+    width: 280px;
+    height: 615px;
+
+    &-screen {
+      position: absolute;
+      border-radius: 14px;
+      overflow: hidden;
+      top: 162px;
+      left: 16px;
+      right: 29px;
+      bottom: 146px;
+      background-color: white;
+    }
+  }
+
+  iframe {
+    border: 15px solid #000;
+    border-top-width: 23px;
+    border-bottom-width: 22px;
+    border-right-width: 17px;
+    width: 100%;
+    height: 100%;
+    display: block;
+    overflow: auto;
+    border-left-width: 23px;
   }
 
 </style>
